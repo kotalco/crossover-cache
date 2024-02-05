@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"fmt"
 	"github.com/kotalco/resp"
 	"log"
 	"net/http"
@@ -52,10 +51,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}
 	gob.Register(CachedResponse{})
 
-	respClient, err := resp.NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
-	if err != nil {
-		return nil, fmt.Errorf("can't create redis client")
-	}
+	//ignore error check to run the plugin with Yaegi
+	respClient, _ := resp.NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
 
 	handler := &Cache{
 		next:          next,
