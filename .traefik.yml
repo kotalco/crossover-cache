@@ -1,0 +1,17 @@
+displayName: crossover-cache
+type: middleware
+iconPath: .assets/icon.png
+
+import: github.com/kotalco/crossover-cache
+
+summary: "RESP powered cache middleware for Traefik"
+
+testData:
+  #RedisAddress address
+  RedisAddress: "localhost:6379"
+  #RedisAuth to authenticate redis
+  RedisAuth: "123456"
+  #RedisPoolSize number of open connections
+  RedisPoolSize: 10
+  #CacheExpiry response cache expiry in seconds
+  CacheExpiry: 10
