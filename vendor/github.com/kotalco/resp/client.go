@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"sync"
 )
@@ -20,8 +19,6 @@ const (
 )
 
 type IClient interface {
-	GetConnection() (IConnection, error)
-	ReleaseConnection(conn IConnection)
 	Do(ctx context.Context, command string) (string, error)
 	Ping(ctx context.Context) (string, error)
 	Set(ctx context.Context, key string, value string) error
@@ -30,94 +27,45 @@ type IClient interface {
 	Delete(ctx context.Context, key string) error
 	Incr(ctx context.Context, key string) (int, error)
 	Expire(ctx context.Context, key string, seconds int) (bool, error)
-	Pool() chan IConnection
-	PoolSize() int
-	Close()
+	Close() error
 }
 
 type Client struct {
-	pool     chan IConnection
-	address  string
-	poolSize int
-	mu       sync.Mutex
-	auth     string
-	dialer   IDialer
+	conn    IConnection
+	address string
+	mu      sync.Mutex
+	auth    string
+	dialer  IDialer
 }
 
-func NewRedisClient(address string, poolSize int, auth string) (IClient, error) {
+func NewRedisClient(address string, auth string) (IClient, error) {
 	client := &Client{
-		pool:     make(chan IConnection, poolSize),
-		address:  address,
-		poolSize: poolSize,
-		auth:     auth,
-		dialer:   NewDialer(),
+		address: address,
+		auth:    auth,
+		dialer:  NewDialer(),
 	}
-	// pre-populate the pool with connections , authenticated and ready to be used
-	for i := 0; i < poolSize; i++ {
-		conn, err := NewRedisConnection(client.dialer, address, auth)
-		if err != nil {
-			log.Println(err.Error())
-			continue
-		}
-		client.pool <- conn
-	}
-	if len(client.pool) == 0 {
+
+	conn, err := NewRedisConnection(client.dialer, address, auth)
+	if err != nil {
 		return nil, errors.New("can't create redis connection")
 	}
+
+	client.conn = conn
 
 	return client, nil
 }
 
-func (client *Client) GetConnection() (IConnection, error) {
-	// make sure that the access to the client.pool is synchronized among concurrent goroutines, make the operation atomic to prevent race conditions
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	select {
-	case conn := <-client.pool:
-		return conn, nil
-	default:
-		// pool is empty now all connection are being used , create a new connection till some connections get released
-		conn, err := NewRedisConnection(client.dialer, client.address, client.auth)
-		if err != nil {
-			return nil, err
-		}
-		return conn, nil
-	}
-}
-
-func (client *Client) ReleaseConnection(conn IConnection) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
-	err := conn.Ping(context.Background())
-	if len(client.pool) >= client.poolSize || err != nil {
-		err := conn.Close()
-		if err != nil {
-			return
-		} //if the pool is full the new conn is closed and discarded
-	} else {
-		client.pool <- conn //if there is room put into the pool for future use
-	}
-}
-
 func (client *Client) Do(ctx context.Context, command string) (string, error) {
-	conn, err := client.GetConnection()
-	if err != nil {
-		return "", err
-	}
-	defer client.ReleaseConnection(conn)
-
 	errChan := make(chan error, 1)
 	replyChan := make(chan string, 1)
 	go func() {
-		err := conn.Send(ctx, command)
+		err := client.conn.Send(ctx, command)
 		if err != nil {
 			errChan <- err
 			return
 		}
 
-		reply, err := conn.Receive(ctx)
+		reply, err := client.conn.Receive(ctx)
 		if err != nil {
 			errChan <- err
 		} else {
@@ -229,20 +177,8 @@ func (client *Client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (client *Client) Close() {
+func (client *Client) Close() error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	for len(client.pool) > 0 {
-		conn := <-client.pool
-		_ = conn.Close()
-	}
-	close(client.pool)
-
-}
-
-func (client *Client) Pool() chan IConnection {
-	return client.pool
-}
-func (client *Client) PoolSize() int {
-	return client.poolSize
+	return client.conn.Close()
 }

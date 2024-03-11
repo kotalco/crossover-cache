@@ -10,8 +10,7 @@ import (
 )
 
 const (
-	DefaultRedisPoolSize = 10
-	DefaultCacheExpiry   = 15
+	DefaultCacheExpiry = 15
 )
 
 type CachedResponse struct {
@@ -21,10 +20,9 @@ type CachedResponse struct {
 }
 
 type Config struct {
-	RedisAddress  string
-	RedisAuth     string
-	RedisPoolSize int
-	CacheExpiry   int //in seconds
+	RedisAddress string
+	RedisAuth    string
+	CacheExpiry  int //in seconds
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -33,45 +31,43 @@ func CreateConfig() *Config {
 }
 
 type Cache struct {
-	next          http.Handler
-	name          string
-	resp          resp.IClient
-	redisAuth     string
-	redisAddress  string
-	redisPoolSize int
-	cacheExpiry   int
+	next         http.Handler
+	name         string
+	redisAuth    string
+	redisAddress string
+	cacheExpiry  int
 }
 
 func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
-	if config.RedisPoolSize == 0 {
-		config.RedisPoolSize = DefaultRedisPoolSize
-	}
 	if config.CacheExpiry == 0 {
 		config.CacheExpiry = DefaultCacheExpiry
 	}
 	gob.Register(CachedResponse{})
 
-	//ignore error check to run the plugin with Yaegi
-	respClient, _ := resp.NewRedisClient(config.RedisAddress, config.RedisPoolSize, config.RedisAuth)
-
 	handler := &Cache{
-		next:          next,
-		name:          name,
-		resp:          respClient,
-		redisAddress:  config.RedisAddress,
-		redisAuth:     config.RedisAuth,
-		redisPoolSize: config.RedisPoolSize,
-		cacheExpiry:   config.CacheExpiry,
+		next:         next,
+		name:         name,
+		redisAddress: config.RedisAddress,
+		redisAuth:    config.RedisAuth,
+		cacheExpiry:  config.CacheExpiry,
 	}
 	return handler, nil
 }
 
 func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	respClient, err := resp.NewRedisClient(c.redisAddress, c.redisAuth)
+	if err != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
+		log.Printf("Failed to create Redis Connection %s", err.Error())
+		rw.Write([]byte("something went wrong"))
+		return
+	}
+	defer respClient.Close()
 	// cache key based on the request
 	cacheKey := req.URL.Path
 
 	// retrieve the cached response
-	cachedData, err := c.resp.Get(req.Context(), cacheKey)
+	cachedData, err := respClient.Get(req.Context(), cacheKey)
 	if err == nil && cachedData != "" {
 		// Cache hit - parse the cached response and write it to the original ResponseWriter
 		var cachedResponse CachedResponse
@@ -88,7 +84,7 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 		log.Printf("Failed to serialize response for caching: %s", err.Error())
-		_ = c.resp.Delete(req.Context(), cacheKey)
+		_ = respClient.Delete(req.Context(), cacheKey)
 	}
 
 	// Cache miss - record the response
@@ -108,7 +104,7 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Store the serialized response in Redis as a string with an expiration time
-	if err := c.resp.SetWithTTL(req.Context(), cacheKey, buffer.String(), c.cacheExpiry); err != nil {
+	if err := respClient.SetWithTTL(req.Context(), cacheKey, buffer.String(), c.cacheExpiry); err != nil {
 		log.Println("Failed to cache response in Redis:", err)
 	}
 
