@@ -13,6 +13,7 @@ import (
 
 type IConnection interface {
 	Auth(ctx context.Context, password string) error
+	Ping(ctx context.Context) error
 	Send(ctx context.Context, command string) error
 	Receive(ctx context.Context) (string, error)
 	Close() error
@@ -62,6 +63,31 @@ func (rc *Connection) Auth(ctx context.Context, password string) error {
 	if reply != "OK" {
 		return errors.New("authentication failed")
 	}
+	return nil
+}
+
+func (rc *Connection) Ping(ctx context.Context) error {
+	// Check if the context has been canceled before attempting the operation
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// Send the PING command to the Redis server
+	if err := rc.Send(ctx, "PING"); err != nil {
+		return err
+	}
+
+	// Receive the reply from the Redis server
+	reply, err := rc.Receive(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Check if the reply is a valid PONG response
+	if reply != "PONG" {
+		return errors.New("did not receive PONG response")
+	}
+
 	return nil
 }
 
