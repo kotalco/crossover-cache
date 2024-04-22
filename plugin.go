@@ -58,8 +58,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	respClient, err := resp.NewRedisClient(c.redisAddress, c.redisAuth)
 	if err != nil {
-		rw.WriteHeader(http.StatusInternalServerError)
 		log.Printf("Failed to create Redis Connection %s", err.Error())
+		rw.WriteHeader(http.StatusInternalServerError)
 		rw.Write([]byte("something went wrong"))
 		return
 	}
@@ -98,7 +98,7 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	log.Println("cache hit")
+	log.Println("cache miss")
 	// Cache miss - record the response
 	recorder := &responseRecorder{rw: rw}
 	c.next.ServeHTTP(recorder, req)
@@ -121,6 +121,10 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if err := respClient.SetWithTTL(req.Context(), cacheKey, encodedString, c.cacheExpiry); err != nil {
 			log.Printf("Failed to cache response in Redis: %s", err.Error())
 		}
+		log.Println("writing response after caching it")
+		rw.WriteHeader(200)
+		_, _ = rw.Write(buffer.Bytes())
+		return
 	}
 
 	// Write the response to the client
