@@ -70,6 +70,7 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// retrieve the cached response
 	cachedData, err := respClient.Get(req.Context(), cacheKey)
 	if err == nil && cachedData != "" {
+		log.Println("cache hit")
 		// Cache hit - decode the base64 string
 		data, err := base64.StdEncoding.DecodeString(cachedData)
 		if err != nil {
@@ -87,6 +88,7 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 					rw.Header().Add(key, value)
 				}
 			}
+			log.Println("writing response from cache")
 			rw.WriteHeader(cachedResponse.StatusCode)
 			_, _ = rw.Write(cachedResponse.Body)
 			return
@@ -96,6 +98,7 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	log.Println("cache hit")
 	// Cache miss - record the response
 	recorder := &responseRecorder{rw: rw}
 	c.next.ServeHTTP(recorder, req)
@@ -111,6 +114,7 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if err := enc.Encode(cachedResponse); err != nil {
 		log.Printf("Failed to serialize response for caching: %s", err)
 	} else {
+		log.Println("caching response to redis")
 		// Encode the buffer to a base64 string
 		encodedString := base64.StdEncoding.EncodeToString(buffer.Bytes())
 		// Store the serialized response in Redis
@@ -120,12 +124,14 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Write the response to the client
-	for key, values := range recorder.Header() {
+	for key, values := range cachedResponse.Headers {
 		for _, value := range values {
 			rw.Header().Add(key, value)
 		}
 	}
-	rw.WriteHeader(recorder.status)
-	rw.Write(recorder.body.Bytes())
+	log.Println("writing response")
+	rw.WriteHeader(cachedResponse.StatusCode)
+	_, err = rw.Write(cachedResponse.Body)
 	return
+
 }
