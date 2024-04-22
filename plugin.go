@@ -82,9 +82,11 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			rw.WriteHeader(cachedResponse.StatusCode)
 			_, _ = rw.Write(cachedResponse.Body)
 			return
+		} else {
+			log.Printf("Failed to serialize response for caching: %s", err.Error())
+			_ = respClient.Delete(req.Context(), cacheKey)
 		}
-		log.Printf("Failed to serialize response for caching: %s", err.Error())
-		_ = respClient.Delete(req.Context(), cacheKey)
+
 	}
 
 	// Cache miss - record the response
@@ -101,14 +103,20 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	enc := gob.NewEncoder(&buffer)
 	if err := enc.Encode(cachedResponse); err != nil {
 		log.Printf("Failed to serialize response for caching: %s", err)
+	} else {
+		// Store the serialized response in Redis
+		if err := respClient.SetWithTTL(req.Context(), cacheKey, buffer.String(), c.cacheExpiry); err != nil {
+			log.Printf("Failed to cache response in Redis: %s", err.Error())
+		}
 	}
 
-	// Store the serialized response in Redis as a string with an expiration time
-	if err := respClient.SetWithTTL(req.Context(), cacheKey, buffer.String(), c.cacheExpiry); err != nil {
-		log.Println("Failed to cache response in Redis:", err)
+	// Write the response to the client
+	for key, values := range recorder.Header() {
+		for _, value := range values {
+			rw.Header().Add(key, value)
+		}
 	}
-
-	// Write the original response
 	rw.WriteHeader(recorder.status)
-	_, _ = rw.Write(recorder.body.Bytes())
+	rw.Write(recorder.body.Bytes())
+	return
 }
