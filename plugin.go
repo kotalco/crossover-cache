@@ -3,6 +3,7 @@ package crossover_cache
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/gob"
 	"github.com/kotalco/resp"
 	"log"
@@ -69,9 +70,16 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// retrieve the cached response
 	cachedData, err := respClient.Get(req.Context(), cacheKey)
 	if err == nil && cachedData != "" {
-		// Cache hit - parse the cached response and write it to the original ResponseWriter
+		// Cache hit - decode the base64 string
+		data, err := base64.StdEncoding.DecodeString(cachedData)
+		if err != nil {
+			log.Printf("Failed to decode base64 string: %s", err)
+			return
+		}
+
+		// Parse the cached response and write it to the original ResponseWriter
 		var cachedResponse CachedResponse
-		buffer := bytes.NewBufferString(cachedData)
+		buffer := bytes.NewBuffer(data) // Use the decoded byte slice
 		dec := gob.NewDecoder(buffer)
 		if err := dec.Decode(&cachedResponse); err == nil {
 			for key, values := range cachedResponse.Headers {
@@ -83,10 +91,9 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			_, _ = rw.Write(cachedResponse.Body)
 			return
 		} else {
-			log.Printf("Failed to serialize response for caching: %s", err.Error())
+			log.Printf("Failed to deserialize response from cache: %s", err.Error())
 			_ = respClient.Delete(req.Context(), cacheKey)
 		}
-
 	}
 
 	// Cache miss - record the response
@@ -104,8 +111,10 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if err := enc.Encode(cachedResponse); err != nil {
 		log.Printf("Failed to serialize response for caching: %s", err)
 	} else {
+		// Encode the buffer to a base64 string
+		encodedString := base64.StdEncoding.EncodeToString(buffer.Bytes())
 		// Store the serialized response in Redis
-		if err := respClient.SetWithTTL(req.Context(), cacheKey, buffer.String(), c.cacheExpiry); err != nil {
+		if err := respClient.SetWithTTL(req.Context(), cacheKey, encodedString, c.cacheExpiry); err != nil {
 			log.Printf("Failed to cache response in Redis: %s", err.Error())
 		}
 	}
