@@ -90,19 +90,24 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Cache miss - record the response
-	recorder := &responseRecorder{rw: rw}
+	recorder := &responseRecorder{
+		rw:     rw,
+		header: rw.Header().Clone(), // Initialize with the original headers.
+	}
 	c.next.ServeHTTP(recorder, req)
 
 	// Serialize the response data
 	cachedResponse := CachedResponse{
 		StatusCode: recorder.status,
-		Headers:    recorder.Header().Clone(), // Convert http.Header to a map for serialization
+		Headers:    recorder.Header(), // Convert http.Header to a map for serialization
 		Body:       recorder.body.Bytes(),
 	}
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)
 	if err := enc.Encode(cachedResponse); err != nil {
 		log.Printf("Failed to serialize response for caching: %s", err)
+		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
+		return
 	} else {
 		// Store the serialized response in Redis
 		if err := respClient.SetWithTTL(req.Context(), cacheKey, buffer.String(), c.cacheExpiry); err != nil {
@@ -110,13 +115,9 @@ func (c *Cache) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// Write the response to the client
-	for key, values := range recorder.Header() {
-		for _, value := range values {
-			rw.Header().Add(key, value)
-		}
+	if _, err := rw.Write(recorder.body.Bytes()); err != nil {
+		log.Printf("Failed to write response body: %s", err)
+		return
 	}
-	rw.WriteHeader(recorder.status)
-	rw.Write(recorder.body.Bytes())
 	return
 }
