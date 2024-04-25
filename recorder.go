@@ -9,18 +9,18 @@ type responseRecorder struct {
 	rw     http.ResponseWriter
 	status int
 	body   bytes.Buffer
+	header http.Header
 }
 
 func (r *responseRecorder) Header() http.Header {
-	return r.rw.Header()
+	return r.header
 }
 
 func (r *responseRecorder) Write(b []byte) (int, error) {
-	r.body.Write(b)
-	return r.rw.Write(b)
+	return r.body.Write(b) // Just buffer the body, don't write to rw
+
 }
 
 func (r *responseRecorder) WriteHeader(statusCode int) {
 	r.status = statusCode
-	r.rw.WriteHeader(statusCode)
 }
